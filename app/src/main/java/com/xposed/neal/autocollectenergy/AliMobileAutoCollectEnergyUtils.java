@@ -20,10 +20,12 @@ import java.util.ArrayList;
 class AliMobileAutoCollectEnergyUtils {
 
     private static String TAG = "XposedHookZFB";
-    private static ArrayList<String> friendsRankUseridList = new ArrayList<String>();
-    private static ArrayList<Boolean> friendsRankHelpCollectList = new ArrayList<>();
-    private static ArrayList<Boolean> friendsRankCanHelpAfterTime = new ArrayList<>();
-    private static boolean isWebViewRefresh;
+    private static ArrayList<String> friendsCanCollectIdList = new ArrayList<>();
+    private static ArrayList<Boolean> friendsCanCollectList = new ArrayList<>();
+    private static ArrayList<Boolean> friendsCanHelpCollectList = new ArrayList<>();
+    private static ArrayList<Boolean> friendsCanCollectAfterList = new ArrayList<>();
+    static ClassLoader loader;
+    private static ArrayList<String> friendsWhiteListId = new ArrayList<>() ;
     private static Integer totalEnergy = 0;
     private static Integer pageCount = 0;
     private static Object curH5PageImpl;
