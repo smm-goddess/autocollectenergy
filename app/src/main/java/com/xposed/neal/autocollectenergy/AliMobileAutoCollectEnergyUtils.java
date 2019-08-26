@@ -51,6 +51,7 @@ class AliMobileAutoCollectEnergyUtils {
 
     private static void reset() {
         friendsCanCollectIdList.clear();
+        friendsCanCollectList.clear();
         friendsCanHelpCollectList.clear();
         friendsCanCollectAfterList.clear();
         totalEnergy = 0;
