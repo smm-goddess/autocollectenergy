@@ -15,23 +15,30 @@ import java.lang.ref.WeakReference;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Date;
+import java.util.Locale;
 
 class AliMobileAutoCollectEnergyUtils {
 
+    private static SimpleDateFormat simpleDateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.CHINA);
     private static String TAG = "XposedHookZFB";
+    private static Boolean RUNNING = false;
     private static ArrayList<String> friendsCanCollectIdList = new ArrayList<>();
     private static ArrayList<Boolean> friendsCanCollectList = new ArrayList<>();
     private static ArrayList<Boolean> friendsCanHelpCollectList = new ArrayList<>();
     private static ArrayList<Boolean> friendsCanCollectAfterList = new ArrayList<>();
+    private static long mostRecentCollectTime = Long.MAX_VALUE;
     static ClassLoader loader;
-    private static ArrayList<String> friendsWhiteListId = new ArrayList<>() ;
+    private static ArrayList<String> friendsWhiteListId = new ArrayList<String>() ;
     private static Integer totalEnergy = 0;
+    private static Integer totalHelpEnergy = 0;
     private static Integer pageCount = 0;
     private static Object curH5PageImpl;
     static WeakReference<Object> curH5FragmentRef;
-    static WeakReference<Activity> h5ActivityRef;
-    private static String AntForestHome = "https://60000002.h5app.alipay.com/www/home.html";
+    public static String ANT_FOREST_URL_HOME = "https://60000002.h5app.alipay.com/www/home.html";
+    public static String ANT_FOREST_URL_PREFIX = "https://60000002.h5app.alipay.com";
     private final static Handler handler = new Hand();
 
     static class Hand extends Handler {
@@ -39,9 +46,11 @@ class AliMobileAutoCollectEnergyUtils {
         public void handleMessage(Message msg) {
             if (msg.what == 1) {
                 String url = (String) msg.obj;
-                Log.i(TAG, "webView url:" + url);
-                if (AntForestHome.equals(url)) {
-                    autoGetCanCollectUserIdList();
+                // Log.i(TAG, "webView url:" + url);
+                if (ANT_FOREST_URL_HOME.equals(url)) {
+                    startAutoCollect();
+                } else {
+                    RUNNING = false;
                 }
             } else if (msg.what == 0) {
                 getUrl();
@@ -50,26 +59,36 @@ class AliMobileAutoCollectEnergyUtils {
     }
 
     private static void reset() {
+        handler.removeCallbacksAndMessages(null);
         friendsCanCollectIdList.clear();
         friendsCanCollectList.clear();
         friendsCanHelpCollectList.clear();
         friendsCanCollectAfterList.clear();
         totalEnergy = 0;
+        totalHelpEnergy = 0;
         pageCount = 0;
+        mostRecentCollectTime = Long.MAX_VALUE;
     }
 
     /**
      * 自动获取有能量的好友信息
      */
-    static void autoGetCanCollectUserIdList() {
-        new Thread(new Runnable() {
-            @Override
-            public void run() {
-                reset();
-                rpcCall_CanCollectEnergy(-1);
-                friendsRankList();
-            }
-        }).start();
+    static void startAutoCollect() {
+        if (!RUNNING) {
+            RUNNING = true;
+            new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    reset();
+                    rpcCall_CanCollectEnergy(-1);
+                    friendsRankList();
+                }
+            }).start();
+        }
+    }
+
+    static void stopAutoCollect() {
+        RUNNING = false;
     }
 
     static void getUrl() {
@@ -97,7 +116,7 @@ class AliMobileAutoCollectEnergyUtils {
                     }
                 });
             } catch (Exception e) {
-                Log.i(TAG, "getRpcCallMethod err: " + Log.getStackTraceString(e));
+                // Log.i(TAG, "getRpcCallMethod err: " + Log.getStackTraceString(e));
                 final Message msg = handler.obtainMessage(1);
                 msg.obj = null;
                 msg.sendToTarget();
@@ -137,19 +156,6 @@ class AliMobileAutoCollectEnergyUtils {
         }
     }
 
-    static boolean enterAntForest(String response) {
-        if (!TextUtils.isEmpty(response)) {
-            try {
-                JSONArray jsonArray = new JSONObject(response).optJSONArray("headPortraits");
-                return jsonArray != null;
-            } catch (JSONException e) {
-                return false;
-            }
-        } else {
-            return false;
-        }
-    }
-
     private static boolean isBubbles(String response) {
         return (!TextUtils.isEmpty(response) && response.contains("collectStatus"));
     }
@@ -172,11 +178,17 @@ class AliMobileAutoCollectEnergyUtils {
                     boolean canCollect = jsonObject.optBoolean("canCollectEnergy");
                     boolean canHelpCollect = jsonObject.optBoolean("canHelpCollect");
                     String userId = jsonObject.optString("userId");
-                    if ((canCollect || canHelpCollect) && !friendsCanCollectIdList.contains(userId) && !friendsWhiteListId.contains(userId)) {
-                        friendsCanCollectIdList.add(userId);
-                        friendsCanCollectList.add(canCollect);
-                        friendsCanHelpCollectList.add(canHelpCollect);
-                        friendsCanCollectAfterList.add(jsonObject.optLong("canCollectLaterTime") != -1);
+                    if (!friendsWhiteListId.contains(userId)) {
+                        long collectLaterTime = jsonObject.optLong("canCollectLaterTime");
+                        if (collectLaterTime != -1 && mostRecentCollectTime > collectLaterTime) {
+                            mostRecentCollectTime = collectLaterTime;
+                        }
+                        if ((canCollect || canHelpCollect) && !friendsCanCollectIdList.contains(userId)) {
+                            friendsCanCollectIdList.add(userId);
+                            friendsCanCollectList.add(canCollect);
+                            friendsCanHelpCollectList.add(canHelpCollect);
+                            friendsCanCollectAfterList.add(collectLaterTime != -1);
+                        }
                     }
                 }
             }
@@ -194,17 +206,25 @@ class AliMobileAutoCollectEnergyUtils {
         showToast("开始收取能量...");
         if (friendsCanCollectIdList.size() > 0) {
             showToast("开始获取每个好友能够偷取的能量信息...");
-            Log.i(TAG, "" + friendsCanCollectIdList);
-            Log.i(TAG, "" + friendsCanCollectList);
-            Log.i(TAG, "" + friendsCanHelpCollectList);
-            Log.i(TAG, "" + friendsCanCollectAfterList);
+            // Log.i(TAG, "" + friendsCanCollectIdList);
+            // Log.i(TAG, "" + friendsCanCollectList);
+            // Log.i(TAG, "" + friendsCanHelpCollectList);
+            // Log.i(TAG, "" + friendsCanCollectAfterList);
             for (int i = 0; i < friendsCanCollectIdList.size(); i++) {
                 rpcCall_CanCollectEnergy(i);
             }
-            Log.i(TAG, "collect energy finish refresh webview...");
+            // Log.i(TAG, "collect energy finish refresh webview...");
         }
-        showToast("一共收取了" + totalEnergy + "g能量");
-        handler.sendEmptyMessageDelayed(0, 20000);
+        showToast("一共收取了" + totalEnergy + "g能量" + ",帮助收取了:" + totalHelpEnergy + "g能量");
+        if (mostRecentCollectTime != Long.MAX_VALUE) {
+            Date dt = new Date();
+            dt.setTime(mostRecentCollectTime);
+            String nextTime = simpleDateFormat.format(dt);
+            showToast("下一次可收取的时间:" + nextTime);
+            handler.sendEmptyMessageAtTime(0, Long.max(System.currentTimeMillis(), mostRecentCollectTime) + 1000);
+        } else {
+            RUNNING = false;
+        }
     }
 
     /**
@@ -212,7 +232,6 @@ class AliMobileAutoCollectEnergyUtils {
      */
     private static String rpcCall_FriendRankList() {
         try {
-            Method rpcCallMethod = getRpcCallMethod();
             JSONArray jsonArray = new JSONArray();
             JSONObject json = new JSONObject();
             json.put("av", "5");
@@ -222,19 +241,30 @@ class AliMobileAutoCollectEnergyUtils {
             pageCount++;
             jsonArray.put(json);
             showToast("开始获取可以收取第" + pageCount + "页好友信息的能量...");
-            Log.i(TAG, "call friendranklist params:" + jsonArray);
+            // Log.i(TAG, "call friendranklist params:" + jsonArray);
 
+            return rpcCall("alipay.antmember.forest.h5.queryEnergyRanking", jsonArray);
+        } catch (Exception e) {
+            // Log.i(TAG, "rpcCall_FriendRankList err: " + Log.getStackTraceString(e));
+            return "";
+        }
+    }
+
+    private static String rpcCall(String funcName, JSONArray jsonArray) {
+        try {
+            Method rpcCallMethod = getRpcCallMethod();
             Class<?> jsonClazz = loader.loadClass("com.alibaba.fastjson.JSONObject");
             Object obj = jsonClazz.newInstance();
 
-            Object resp = rpcCallMethod.invoke(null, "alipay.antmember.forest.h5.queryEnergyRanking", jsonArray.toString(),
+            Object resp = rpcCallMethod.invoke(null, funcName, jsonArray.toString(),
                     "", true, obj, null, false, curH5PageImpl, 0, "", false, -1, "");
             Method method = resp.getClass().getMethod("getResponse", new Class<?>[]{});
             return (String) method.invoke(resp, new Object[]{});
         } catch (Exception e) {
-            Log.i(TAG, "rpcCall_FriendRankList err: " + Log.getStackTraceString(e));
-            return "";
+
         }
+        RUNNING = false;
+        return "";
     }
 
     /**
@@ -245,25 +275,17 @@ class AliMobileAutoCollectEnergyUtils {
     private static void rpcCall_CanCollectEnergy(int index) {
         try {
             if (index < 0) {
-                Method rpcCallMethod = getRpcCallMethod();
                 JSONArray jsonArray = new JSONArray();
                 JSONObject json = new JSONObject();
                 json.put("version", "20181220");
                 jsonArray.put(json);
-                Log.i(TAG, "call cancollect energy params:" + jsonArray);
+                // Log.i(TAG, "call cancollect energy params:" + jsonArray);
 
-                Class<?> jsonClazz = loader.loadClass("com.alibaba.fastjson.JSONObject");
-                Object obj = jsonClazz.newInstance();
-                Object resp = rpcCallMethod.invoke(null, "alipay.antmember.forest.h5.queryNextAction", jsonArray.toString(),
-                        "", true, obj, null, false, curH5PageImpl, 0, "", false, -1, "");
-
-                Method method = resp.getClass().getMethod("getResponse", new Class<?>[]{});
-                final String response = (String) method.invoke(resp, new Object[]{});
+                final String response = rpcCall("alipay.antmember.forest.h5.queryNextAction", jsonArray);
                 if (AliMobileAutoCollectEnergyUtils.isBubbles(response)) {
                     AliMobileAutoCollectEnergyUtils.autoGetCanCollectBubbleIdList(response);
                 }
             } else {
-                Method rpcCallMethod = getRpcCallMethod();
                 JSONArray jsonArray = new JSONArray();
                 JSONObject json = new JSONObject();
                 String userId = friendsCanCollectIdList.get(index);
@@ -287,15 +309,9 @@ class AliMobileAutoCollectEnergyUtils {
                 json.put("userId", userId);
                 json.put("version", "20181220");
                 jsonArray.put(json);
-                Log.i(TAG, "call cancollect energy params:" + jsonArray);
+                // Log.i(TAG, "call cancollect energy params:" + jsonArray);
 
-                Class<?> jsonClazz = loader.loadClass("com.alibaba.fastjson.JSONObject");
-                Object obj = jsonClazz.newInstance();
-                Object resp = rpcCallMethod.invoke(null, "alipay.antmember.forest.h5.queryNextAction", jsonArray.toString(),
-                        "", true, obj, null, false, curH5PageImpl, 0, "", false, -1, "");
-
-                Method method = resp.getClass().getMethod("getResponse", new Class<?>[]{});
-                final String response = (String) method.invoke(resp, new Object[]{});
+                final String response = rpcCall("alipay.antmember.forest.h5.queryNextAction", jsonArray);
                 if (AliMobileAutoCollectEnergyUtils.isBubbles(response)) {
                     new Thread(new Runnable() {
                         @Override
@@ -310,8 +326,7 @@ class AliMobileAutoCollectEnergyUtils {
                 pkObject.put("pkType", "Week");
                 pkObject.put("pkUser", userId);
                 pkArray.put(pkObject);
-                rpcCallMethod.invoke(null, "alipay.antmember.forest.h5.queryPKRecord", pkArray.toString(),
-                        "", true, obj, null, false, curH5PageImpl, 0, "", false, -1, "");
+                rpcCall("alipay.antmember.forest.h5.queryPKRecord", pkArray);
 
                 JSONArray jArray = new JSONArray();
                 JSONObject jObject = new JSONObject();
@@ -319,17 +334,15 @@ class AliMobileAutoCollectEnergyUtils {
                 jObject.put("startIndex", 0);
                 jObject.put("userId", userId);
                 jArray.put(jObject);
-                rpcCallMethod.invoke(null, "alipay.antmember.forest.h5.pageQueryDynamics", jArray.toString(),
-                        "", true, obj, null, false, curH5PageImpl, 0, "", false, -1, "");
+                rpcCall("alipay.antmember.forest.h5.pageQueryDynamics", jArray);
             }
         } catch (Exception e) {
-            Log.i(TAG, "rpcCall_CanCollectEnergy err: " + Log.getStackTraceString(e));
+            // Log.i(TAG, "rpcCall_CanCollectEnergy err: " + Log.getStackTraceString(e));
         }
     }
 
     private static void rpcCall_HelpCollectEnergy(String userId, long bubbleId) {
         try {
-            Method rpcCallMethod = getRpcCallMethod();
             JSONArray jsonArray = new JSONArray();
             JSONArray bubbleAry = new JSONArray();
             bubbleAry.put(bubbleId);
@@ -337,17 +350,13 @@ class AliMobileAutoCollectEnergyUtils {
             json.put("targetUserId", userId);
             json.put("bubbleIds", bubbleAry);
             jsonArray.put(json);
-            Log.i(TAG, "call cancollect energy params:" + jsonArray);
+            // Log.i(TAG, "call cancollect energy params:" + jsonArray);
 
             Class<?> jsonClazz = loader.loadClass("com.alibaba.fastjson.JSONObject");
-            Object obj = jsonClazz.newInstance();
-            Object resp = rpcCallMethod.invoke(null, "alipay.antmember.forest.h5.forFriendCollectEnergy", jsonArray.toString(),
-                    "", true, obj, null, false, curH5PageImpl, 0, "", false, -1, "");
-            Method method = resp.getClass().getMethod("getResponse", new Class<?>[]{});
-            String response = (String) method.invoke(resp, new Object[]{});
+            String response = rpcCall("alipay.antmember.forest.h5.forFriendCollectEnergy", jsonArray);
             AliMobileAutoCollectEnergyUtils.parseHelpCollectEnergyResponse(response);
         } catch (Exception e) {
-            Log.i(TAG, "rpcCall_CanCollectEnergy err: " + Log.getStackTraceString(e));
+            // Log.i(TAG, "rpcCall_CanCollectEnergy err: " + Log.getStackTraceString(e));
         }
     }
 
@@ -359,7 +368,6 @@ class AliMobileAutoCollectEnergyUtils {
      */
     private static void rpcCall_CollectEnergy(String userId, long bubbleId) {
         try {
-            Method rpcCallMethod = getRpcCallMethod();
             JSONArray jsonArray = new JSONArray();
             JSONArray bubbleAry = new JSONArray();
             bubbleAry.put(bubbleId);
@@ -367,17 +375,12 @@ class AliMobileAutoCollectEnergyUtils {
             json.put("userId", userId);
             json.put("bubbleIds", bubbleAry);
             jsonArray.put(json);
-            Log.i(TAG, "call cancollect energy params:" + jsonArray);
+            // Log.i(TAG, "call cancollect energy params:" + jsonArray);
 
-            Class<?> jsonClazz = loader.loadClass("com.alibaba.fastjson.JSONObject");
-            Object obj = jsonClazz.newInstance();
-            Object resp = rpcCallMethod.invoke(null, "alipay.antmember.forest.h5.collectEnergy", jsonArray.toString(),
-                    "", true, obj, null, false, curH5PageImpl, 0, "", false, -1, "");
-            Method method = resp.getClass().getMethod("getResponse", new Class<?>[]{});
-            String response = (String) method.invoke(resp, new Object[]{});
+            String response = rpcCall("alipay.antmember.forest.h5.collectEnergy", jsonArray);
             AliMobileAutoCollectEnergyUtils.parseCollectEnergyResponse(response);
         } catch (Exception e) {
-            Log.i(TAG, "rpcCall_CanCollectEnergy err: " + Log.getStackTraceString(e));
+            // Log.i(TAG, "rpcCall_CanCollectEnergy err: " + Log.getStackTraceString(e));
         }
     }
 
@@ -401,17 +404,26 @@ class AliMobileAutoCollectEnergyUtils {
                     return callM;
                 }
             } catch (Exception e) {
-                Log.i(TAG, "getRpcCallMethod err: " + Log.getStackTraceString(e));
+                // Log.i(TAG, "getRpcCallMethod err: " + Log.getStackTraceString(e));
             }
         }
         return null;
     }
 
-    private static boolean parseHelpCollectEnergyResponse(String response) {
-        return true;
+    private static void parseHelpCollectEnergyResponse(String response) {
+        if (!TextUtils.isEmpty(response) && response.contains("failedBubbleIds")) {
+            try {
+                JSONObject jsonObject = new JSONObject(response);
+                JSONArray jsonArray = jsonObject.optJSONArray("bubbles");
+                for (int i = 0; i < jsonArray.length(); i++) {
+                    totalHelpEnergy += jsonArray.getJSONObject(i).optInt("collectedEnergy");
+                }
+            } catch (Exception e) {
+            }
+        }
     }
 
-    private static boolean parseCollectEnergyResponse(String response) {
+    private static void parseCollectEnergyResponse(String response) {
         if (!TextUtils.isEmpty(response) && response.contains("failedBubbleIds")) {
             try {
                 JSONObject jsonObject = new JSONObject(response);
@@ -419,17 +431,28 @@ class AliMobileAutoCollectEnergyUtils {
                 for (int i = 0; i < jsonArray.length(); i++) {
                     totalEnergy += jsonArray.getJSONObject(i).optInt("collectedEnergy");
                 }
-                if ("SUCCESS".equals(jsonObject.optString("resultCode"))) {
-                    return true;
-                }
             } catch (Exception e) {
             }
         }
-        return false;
+    }
+
+    private static Activity getActivity() {
+        final Object h5Fragment = curH5FragmentRef.get();
+        if (h5Fragment != null) {
+            try {
+                Method getActivity = h5Fragment.getClass().getMethod("getActivity");
+                getActivity.setAccessible(true);
+                return (Activity) getActivity.invoke(h5Fragment);
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+
+        }
+        return null;
     }
 
     private static void showToast(final String str) {
-        final Activity activity = h5ActivityRef.get();
+        final Activity activity = getActivity();
         if (activity != null) {
             try {
                 activity.runOnUiThread(new Runnable() {
@@ -438,8 +461,10 @@ class AliMobileAutoCollectEnergyUtils {
                     }
                 });
             } catch (Exception e) {
-                Log.i(TAG, "showToast err: " + Log.getStackTraceString(e));
+                // Log.i(TAG, "showToast err: " + Log.getStackTraceString(e));
             }
+        } else {
+            RUNNING = false;
         }
     }
 }
