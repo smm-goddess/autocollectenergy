@@ -6,18 +6,13 @@ import android.content.Context;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.os.Bundle;
-import android.util.Log;
 
 import java.lang.ref.WeakReference;
-import java.lang.reflect.Method;
 
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
-
-import static com.xposed.neal.autocollectenergy.AliMobileAutoCollectEnergyUtils.ANT_FOREST_URL_HOME;
-import static com.xposed.neal.autocollectenergy.AliMobileAutoCollectEnergyUtils.ANT_FOREST_URL_PREFIX;
 
 public class XposedHook implements IXposedHookLoadPackage {
 
@@ -36,7 +31,7 @@ public class XposedHook implements IXposedHookLoadPackage {
         try {
             XposedHelpers.findAndHookMethod(Application.class, "attach", Context.class, new ApplicationAttachMethodHook());
         } catch (Exception e2) {
-            // Log.i(TAG, "hookRpcCall err:" + Log.getStackTraceString(e2));
+            e2.printStackTrace();
         }
     }
 
@@ -69,29 +64,6 @@ public class XposedHook implements IXposedHookLoadPackage {
                     }
                 }
 
-                clazz = loader.loadClass("com.alipay.mobile.nebulacore.web.H5WebView");
-                if (clazz != null) {
-                    XposedHelpers.findAndHookMethod(clazz, "loadUrl", String.class, new XC_MethodHook() {
-                        @Override
-                        protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                            super.beforeHookedMethod(param);
-                        }
-
-                        @Override
-                        protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                            super.afterHookedMethod(param);
-//                            String url = (String) param.args[0];
-//                            if (url.startsWith("http://") || url.startsWith("https://")) {
-//                                if (ANT_FOREST_URL_HOME.equals(url)) {
-//                                    AliMobileAutoCollectEnergyUtils.startAutoCollect();
-//                                } else if (!url.startsWith(ANT_FOREST_URL_PREFIX)) {
-//                                    AliMobileAutoCollectEnergyUtils.stopAutoCollect();
-//                                }
-//                            }
-                        }
-                    });
-                }
-
                 clazz = loader.loadClass("com.alipay.mobile.nebulaappproxy.api.rpc.H5RpcUtil");
                 if (clazz != null) {
                     notFirst = true;
@@ -105,26 +77,7 @@ public class XposedHook implements IXposedHookLoadPackage {
                                     @Override
                                     protected void afterHookedMethod(MethodHookParam param) throws Throwable {
                                         super.afterHookedMethod(param);
-                                        Object[] args = param.args;
-                                        // Log.i(TAG, "params:" + args[0]
-//                                                + "," + args[1]
-//                                                + "," + args[2]
-//                                                + "," + args[3]
-//                                                + "," + args[4]
-//                                                + "," + args[5]
-//                                                + "," + args[6]
-//                                                + "," + "H5"
-//                                                + "," + args[7]
-//                                                + "," + args[8]
-//                                                + "," + args[9]
-//                                                + "," + args[10]
-//                                                + "," + args[11]
-//                                        );
-                                        if ("alipay.antmember.forest.h5.queryNextAction".equals(args[0])) {
-                                            if (!((String) args[1]).contains("userId")) {
-                                                AliMobileAutoCollectEnergyUtils.startAutoCollect();
-                                            }
-                                        }
+                                        AliMobileAutoCollectEnergyUtils.DiagnoseRpcHookParams(param);
                                     }
                                 });
                     }
